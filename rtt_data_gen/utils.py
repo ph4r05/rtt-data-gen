@@ -99,8 +99,9 @@ def get_sage_bin(binpath=None, rtt_settings_path=None, rtt_config=None, search_d
         return binpath
 
     if rtt_settings_path or rtt_config:
-        with open(rtt_settings_path, 'r') as fh:
-            rtt_config = json.load(fh)
+        if rtt_settings_path:
+            with open(rtt_settings_path, 'r') as fh:
+                rtt_config = json.load(fh)
 
         cand = jsonpath('$.toolkit-settings.binaries.sage', rtt_config, True)
         if cand is not None and os.path.exists(cand):
@@ -109,6 +110,9 @@ def get_sage_bin(binpath=None, rtt_settings_path=None, rtt_config=None, search_d
     cand = os.getenv("SAGE_PATH")
     if cand is not None and os.path.exists(cand):
         return cand
+
+    if search_dir is None:
+        search_dir = os.path.dirname(rtt_settings_path)
 
     if search_dir:
         cand = os.path.realpath(os.path.join(search_dir, 'sage'))
