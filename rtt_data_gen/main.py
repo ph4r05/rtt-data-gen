@@ -218,7 +218,9 @@ class DataGenerator:
             self.sage_bin = get_sage_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
 
         res = template
-        res = res.replace('{{CRYPTOSTREAMS_BIN}}', self.cs_bin)
+        if '{{CRYPTOSTREAMS_BIN}}' in template:
+            res = res.replace('{{CRYPTOSTREAMS_BIN}}', self.cs_bin)
+
         res = res.replace('{{PYTHON_BIN}}', self.python_bin or 'python3')
         res = res.replace('{{SAGE_BIN}}', self.sage_bin or 'sage')
         res = res.replace('{{RTT_EXEC}}', self.rtt_config_dir)
