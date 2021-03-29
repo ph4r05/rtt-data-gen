@@ -3,7 +3,7 @@ import sys
 from setuptools import setup
 from setuptools import find_packages
 
-version = '0.0.3'
+version = '0.0.4'
 
 # Please update tox.ini when modifying dependency version requirements
 install_requires = [
@@ -16,8 +16,8 @@ install_requires = [
 
     'sarge>=0.1.4',
     'ph4-runner',
-    'scipy',
-
+    'randomgen',
+    'numpy',
 ]
 
 dev_extras = [
@@ -75,6 +75,7 @@ setup(
     entry_points={
         'console_scripts': [
             'rtt-data-gen = rtt_data_gen.main:main',
+            'rtt-data-spread = rtt_data_gen.spreader:main',
         ],
     }
 )
