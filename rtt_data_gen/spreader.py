@@ -306,8 +306,9 @@ class DataGenerator:
         b_filler = bitarray(isize_b*8 - isize, endian='big')
         b_filler.setall(0)
         btmp = bitarray(endian='big')
-        osize_mask = 2 ** (osize_b * 8) - 1
+        osize_mask = (2 ** (osize_b * 8)) - 1
         nrejects = 0
+        noverflows = 0
         time_start = time.time()
         logger.info("Generating data")
 
@@ -323,6 +324,9 @@ class DataGenerator:
                 data = number_streamer(gg, isize, read_chunk)
             elif self.args.rand_mod_bias2:
                 gg = rand_moduli_bias_frac(mod, self.rng, 0.01, 7)
+                data = number_streamer(gg, isize, read_chunk)
+            elif self.args.rand_mod_bias3:
+                gg = rand_moduli_bias_frac(mod, self.rng, 0.01, 4)
                 data = number_streamer(gg, isize, read_chunk)
             else:
                 data = self.rng.randbytes(read_chunk)
@@ -353,6 +357,8 @@ class DataGenerator:
                 if spreaded is None:
                     nrejects += 1
                     continue
+                if spreaded > osize_mask:
+                    noverflows += 1
 
                 oelem = int(spreaded) & osize_mask
                 oelem_b = oelem.to_bytes(osize_b, 'big')
@@ -379,7 +385,7 @@ class DataGenerator:
                 break
 
         time_elapsed = time.time() - time_start
-        logger.info("Number of rejects: %s, time: %s s" % (nrejects, time_elapsed, ))
+        logger.info("Number of rejects: %s, overflows: %s, time: %s s" % (nrejects, noverflows, time_elapsed, ))
         if self.args.ofile:
             output_fh.close()
 
@@ -400,6 +406,8 @@ class DataGenerator:
                             help='Generate randomness internally, generating random integer in mod range, bias1')
         parser.add_argument('--inp-rand-mod-bias2', dest='rand_mod_bias2', action='store_const', const=True,
                             help='Generate randomness internally, generating random integer in mod range, bias2')
+        parser.add_argument('--inp-rand-mod-bias3', dest='rand_mod_bias3', action='store_const', const=True,
+                            help='Generate randomness internally, generating random integer in mod range, bias3')
         parser.add_argument('--inp-ctr', dest='inp_ctr', action='store_const', const=True,
                             help='Input counter generator')
         parser.add_argument('--inp-ctr-off', dest='inp_ctr_off', type=int, default=0,
