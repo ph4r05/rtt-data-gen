@@ -161,13 +161,14 @@ class ModSpreader:
 
         self.max = (2 ** osize)
         self.max_mask = self.max - 1
-        self.tp = self.max // m
-        self.bp = self.max / m
+        self.tp = self.max // m  # number of full-sized ms inside the range
+        self.bp = self.max / m   # precise fraction
         self.rm = self.max - self.tp * self.m
         self.msize = int(math.ceil(math.log2(m)))
 
         self.gen_randint_0_tp = rand_gen_randint(0, self.tp, gen)
         self.gen_randint_0_maxm1 = rand_gen_randint(0, self.max - 1, gen)
+        self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1)), gen)
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
 
     def spread(self, z):
@@ -217,6 +218,30 @@ class ModSpreader:
         """Cannot detect biases, z is basically ignored"""
         z %= self.m
         x = int(next(self.gen_uniform_0_bp) * self.m + z)
+        return x if x < self.max else None
+
+    def spread_inverse_sample(self, z):
+        """Inversion sampling, https://en.wikipedia.org/wiki/Inverse_transform_sampling
+        Intuition: use z to cover the whole interval. Without correction, there would be gaps (e.g., hit only each 4th
+          number). Use then U() generator to cover the holes. Minimum rejections.
+
+          - z is in the interval [0, m-1], uniform. Then Y = z/(m-1) is on [0, 1]
+          - step = 1/(m-1) is a difference of two values from Y distribution, numbers outside the step are not present.
+          - to expand the range of a function, generate sub-step precision with an uniform distribution
+            (to spread outcomes across the window)
+          - Resulting distribution expanded on the whole interval:
+            (z / (m-1)) + U(0, 1/(m-1)),   note U interval is open on the upper end. This is OK, not to hit next box.
+          - Rejections: minimal, only if the z = m-1, we are hitting few numbers above the interval. Those are rejected.
+          - Potential problem: if z=m-1 is biased, the chance of discovering this is a bit lower than other numbers.
+            Due to spread to higher numbers, it is spread across mx / (m-1), thus prob. is (m-1) / mx
+        """
+        z %= self.m
+        u = (z / (self.m - 1))  # uniform dist on [0, 1], step is 1/(m-1)
+        x = int((u + next(self.gen_uniform_0_step)) * self.max_mask)
+        return x if x < self.max else None
+
+    def spread_rand(self, z):
+        x = int(next(self.gen_randint_0_maxm1))
         return x if x < self.max else None
 
 
@@ -295,6 +320,10 @@ class DataGenerator:
                 spread_func = spreader.spread_wider
             elif st == 9:
                 spread_func = spreader.spread_wider_reject
+            elif st == 10:
+                spread_func = spreader.spread_inverse_sample
+            elif st == 11:
+                spread_func = spreader.spread_rand
             else:
                 raise ValueError('No such strategy')
 
@@ -398,8 +427,8 @@ class DataGenerator:
                             help='Read input stdin')
         parser.add_argument('-r', '--rand', dest='rand', action='store_const', const=True,
                             help='Generate randomness internally')
-        parser.add_argument('--rgen', dest='rgen',
-                            help='Random number generator implementation (pcg32)')
+        parser.add_argument('--rgen', dest='rgen', default='aes',
+                            help='Random number generator implementation (aes)')
         parser.add_argument('--inp-rand-mod', dest='rand_mod', action='store_const', const=True,
                             help='Generate randomness internally, generating random integer in mod range')
         parser.add_argument('--inp-rand-mod-bias1', dest='rand_mod_bias1', action='store_const', const=True,
