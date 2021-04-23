@@ -129,6 +129,56 @@ def get_sage_bin(binpath=None, rtt_settings_path=None, rtt_config=None, search_d
     return None
 
 
+def get_sage_python_bin(binpath=None, rtt_settings_path=None, rtt_config=None, search_dir=None):
+    if binpath is not None and os.path.exists(binpath):
+        return binpath
+
+    if rtt_settings_path or rtt_config:
+        if rtt_settings_path:
+            with open(rtt_settings_path, 'r') as fh:
+                rtt_config = json.load(fh)
+
+        cand = jsonpath('$.toolkit-settings.binaries.sage-python', rtt_config, True)
+        if cand is not None and os.path.exists(cand):
+            return cand
+
+    cand = os.getenv("SAGE_PYTHON_PATH")
+    if cand is not None and os.path.exists(cand):
+        return cand
+
+    if search_dir is None:
+        search_dir = os.path.dirname(rtt_settings_path)
+
+    if search_dir:
+        cand = os.path.realpath(os.path.join(search_dir, 'sage-python'))
+        if os.path.exists(cand):
+            if os.access(cand, os.X_OK):
+                return cand
+            else:
+                logger.info("sage found in search-dir but it is not executable")
+
+    sage = get_sage_bin(rtt_settings_path=rtt_settings_path, rtt_config=rtt_config, search_dir=search_dir)
+    if not sage:
+        return None
+
+    # auto-detect
+    try:
+        sage_dir = os.path.dirname(os.path.realpath(sage))
+        cands = [
+            os.path.join(sage_dir, 'local/bin/python3'),
+            os.path.join(sage_dir, 'local/bin/python'),
+        ]
+
+        for c in cands:
+            if os.path.exists(c) and os.access(c, os.X_OK):
+                return c
+
+    except Exception as e:
+        pass
+
+    return None
+
+
 # Source: rtt-deployment-openshift/common/rtt_cryptostreams.py
 def eval_cryptostreams_to_file(generator_path, out_file, tmpdir, config_file=None, config=None):
     new_tmp_dir = None

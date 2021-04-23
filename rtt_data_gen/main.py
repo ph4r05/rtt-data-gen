@@ -27,7 +27,7 @@ from typing import Optional, List
 
 from ph4runner import AsyncRunner
 
-from .utils import try_fnc, slugify, get_cryptostreams_bin, get_sage_bin, eval_cryptostreams_to_file
+from .utils import try_fnc, slugify, get_cryptostreams_bin, get_sage_bin, get_sage_python_bin, eval_cryptostreams_to_file
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level=logging.INFO)
@@ -64,6 +64,7 @@ class DataGenerator:
         self.temp_files = {}  # type: dict[str, tempfile.NamedTemporaryFile]
         self.cstream_files = {}  # type: dict[str, tempfile.NamedTemporaryFile]
         self.sage_bin = None
+        self.sage_python_bin = None
         self.cs_bin = None
         self.python_bin = None
 
@@ -216,6 +217,8 @@ class DataGenerator:
             self.python_bin = sys.executable
         if '{{SAGE_BIN}}' in template and not self.sage_bin:
             self.sage_bin = get_sage_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
+        if '{{SAGE_PYTHON_BIN}}' in template and not self.sage_python_bin:
+            self.sage_python_bin = get_sage_python_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
 
         res = template
         if '{{CRYPTOSTREAMS_BIN}}' in template:
@@ -223,6 +226,7 @@ class DataGenerator:
 
         res = res.replace('{{PYTHON_BIN}}', self.python_bin or 'python3')
         res = res.replace('{{SAGE_BIN}}', self.sage_bin or 'sage')
+        res = res.replace('{{SAGE_PYTHON_BIN}}', self.sage_python_bin)
         res = res.replace('{{RTT_EXEC}}', self.rtt_config_dir)
         res = res.replace('{{OFILE}}', self.args.data_path or '')
         return res
@@ -254,7 +258,7 @@ class DataGenerator:
 
           - example config: {"stream": {"type": "shell", "exec": [], "exec": "", "stdin": {}}}
           - placeholders from the json path? sage, python, cryptostreams bin, ...
-          {{CRYPTOSTREAMS_BIN}},  {{SAGE_BIN}},  {{PYTHON_BIN}}
+          {{CRYPTOSTREAMS_BIN}}, {{SAGE_BIN}}, {{SAGE_PYTHON_BIN}}, {{PYTHON_BIN}}
 
           - keys configurable as file? use cstreams/native generator to generate a temp file, placeholder then.
           "tempfiles": {}
