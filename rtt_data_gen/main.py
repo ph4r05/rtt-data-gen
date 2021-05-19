@@ -9,7 +9,6 @@ import configparser
 import coloredlogs
 import logging
 import json
-import jsons
 import itertools
 import shlex
 import time
@@ -28,6 +27,7 @@ from typing import Optional, List
 from ph4runner import AsyncRunner
 
 from .utils import try_fnc, slugify, get_cryptostreams_bin, get_sage_bin, get_sage_python_bin, eval_cryptostreams_to_file
+from .qrng import Qrng
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level=logging.INFO)
@@ -294,23 +294,20 @@ class DataGenerator:
         if not config:
             raise ValueError('Invalid config file %s' % (self.args.config,))
 
-        if config['stream']['type'] != 'shell':
-            raise ValueError("Only master stream supported is shell")
+        stream_type = config['stream']['type']
+        if stream_type not in ['shell', 'qrng']:
+            raise ValueError("Only master stream supported is {shell, qrng}")
 
+        is_qrng = stream_type == 'qrng'
         stream = config['stream']
-        exec = stream['exec']
         direct_file = 'direct_file' in stream and stream['direct_file']
 
         scratch_tmp = tempfile.TemporaryDirectory(prefix='rtt-temp') if not self.args.scratch_dir else None
         self.tmp_root = self.args.scratch_dir if self.args.scratch_dir else scratch_tmp.name
         self.tmp_dir = tempfile.TemporaryDirectory(prefix='rtt-data-gen-', dir=self.tmp_root)
+
         self.handle_input_files(config)
         self.handle_cstreams_files(config)
-
-        exec_is_str = isinstance(exec, str)
-        exec_arr = exec if isinstance(exec, list) else [exec]
-        exec_arr = [self.substitute_template(x) for x in exec_arr]
-        exec = exec_arr if exec_is_str else exec_arr[0]
 
         proc_stdout = None
         if direct_file:
@@ -320,14 +317,39 @@ class DataGenerator:
         else:
             proc_stdout = sys.stdout
 
-        logger.info('Starting generation process..., cmd: %s, direct: %s, file: %s'
-                    % (exec, direct_file, self.args.data_path))
+        if is_qrng:
+            creds = self.substitute_template(config['cred_file'])
+            total_size = config['total_size']
+            creds_js = None
+            with open(creds) as fh:
+                creds_js = json.load(fh)
 
-        p = subprocess.Popen(exec, shell=True, cwd=self.tmp_dir.name, stderr=sys.stderr, stdout=proc_stdout)
-        out, err = p.communicate()
-        if p.returncode != 0:
-            logger.error('Could not generate data, code: %s, err: %s' % (p.returncode, err))
-            raise ValueError("Generator failed to execute, return code: %")
+            qrng = Qrng(user=creds_js['user'], passwd=creds_js['passwd'])
+            nread = 0
+            while nread < total_size:
+                for chunk in qrng.download():
+                    csize = len(chunk)
+                    if csize + nread > total_size:
+                        chunk = chunk[:total_size - nread]
+                    proc_stdout.write(chunk)
+                    nread += len(chunk)
+                    if nread >= total_size:
+                        break
+
+        else:
+            exec = stream['exec']
+            exec_is_str = isinstance(exec, str)
+            exec_arr = exec if isinstance(exec, list) else [exec]
+            exec_arr = [self.substitute_template(x) for x in exec_arr]
+            exec = exec_arr if exec_is_str else exec_arr[0]
+            logger.info('Starting generation process..., cmd: %s, direct: %s, file: %s'
+                        % (exec, direct_file, self.args.data_path))
+
+            p = subprocess.Popen(exec, shell=True, cwd=self.tmp_dir.name, stderr=sys.stderr, stdout=proc_stdout)
+            out, err = p.communicate()
+            if p.returncode != 0:
+                logger.error('Could not generate data, code: %s, err: %s' % (p.returncode, err))
+                raise ValueError("Generator failed to execute, return code: %")
 
         if not direct_file and self.args.data_path:
             proc_stdout.close()
