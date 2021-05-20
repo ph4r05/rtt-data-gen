@@ -226,7 +226,7 @@ class DataGenerator:
 
         res = res.replace('{{PYTHON_BIN}}', self.python_bin or 'python3')
         res = res.replace('{{SAGE_BIN}}', self.sage_bin or 'sage')
-        res = res.replace('{{SAGE_PYTHON_BIN}}', self.sage_python_bin)
+        res = res.replace('{{SAGE_PYTHON_BIN}}', self.sage_python_bin or 'sage -python')
         res = res.replace('{{RTT_EXEC}}', self.rtt_config_dir)
         res = res.replace('{{OFILE}}', self.args.data_path or '')
         return res
@@ -318,8 +318,8 @@ class DataGenerator:
             proc_stdout = sys.stdout
 
         if is_qrng:
-            creds = self.substitute_template(config['cred_file'])
-            total_size = config['total_size']
+            creds = self.substitute_template(stream['cred_file'])
+            total_size = stream['total_size']
             creds_js = None
             with open(creds) as fh:
                 creds_js = json.load(fh)
