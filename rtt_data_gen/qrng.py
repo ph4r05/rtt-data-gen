@@ -53,7 +53,7 @@ class Qrng:
         for att in range(2):
             r = self.session.get(self.url_file)
             if r.status_code == 403:
-                logger.info("Download fialed, login needed, trying to log in")
+                logger.info("Download failed, login needed, trying to log in")
                 self.login()
 
         r.raise_for_status()
@@ -74,10 +74,45 @@ class Qrng:
                 yield chunk
 
 
-if __name__ == '__main__':
+def main():
     import coloredlogs
+    import json
     coloredlogs.install(level=logging.INFO)
-    q = Qrng()
 
-    for x in q.download():
-        print(binascii.hexlify(x[:12]))
+    parser = argparse.ArgumentParser(description='QRNG downloader')
+    parser.add_argument('-c', '--creds', default=None, required=True,
+                        help='Credentials JSON config')
+    parser.add_argument('-f', '--data-path', dest='data_path', default=None,
+                        help='Where to generate resulting file, if not defined, stdout is used')
+    parser.add_argument('-s', '--size', dest='total_size', default=None, type=int,
+                        help='Number of bytes to generate')
+    args = parser.parse_args()
+
+    proc_stdout = None
+    if args.data_path:
+        proc_stdout = open(args.data_path, 'wb+')
+    else:
+        proc_stdout = sys.stdout.buffer
+
+    with open(args.creds) as fh:
+        creds_js = json.load(fh)
+
+    qrng = Qrng(user=creds_js['user'], passwd=creds_js['passwd'])
+    nread = 0
+    while not args.total_size or (nread < args.total_size):
+        for chunk in qrng.download():
+            csize = len(chunk)
+            if args.total_size and (csize + nread > args.total_size):
+                chunk = chunk[:args.total_size - nread]
+            proc_stdout.write(chunk)
+            nread += len(chunk)
+            if args.total_size and nread >= args.total_size:
+                break
+
+    proc_stdout.flush()
+    if proc_stdout != sys.stdout:
+        proc_stdout.close()
+
+
+if __name__ == '__main__':
+    main()
