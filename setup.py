@@ -3,7 +3,7 @@ import sys
 from setuptools import setup
 from setuptools import find_packages
 
-version = '0.0.9'
+version = '0.0.10'
 
 # Please update tox.ini when modifying dependency version requirements
 install_requires = [
@@ -75,6 +75,7 @@ setup(
         'console_scripts': [
             'rtt-data-gen = rtt_data_gen.main:main',
             'rtt-data-spread = rtt_data_gen.spreader:main',
+            'rtt-data-qrng = rtt_data_gen.qrng:main',
         ],
     }
 )
