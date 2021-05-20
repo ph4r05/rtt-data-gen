@@ -54,11 +54,12 @@ def number_streamer(gen, osize, nbytes):
     osize_b = int(math.ceil(osize/8.))
     b = bitarray(endian='big')
     btmp = bitarray(endian='big')
+    offset = osize_b * 8 - osize
     for x in itertools.islice(gen, nbytes*8 // osize):
         xb = int(x).to_bytes(osize_b, 'big')
         btmp.clear()
         btmp.frombytes(xb)
-        b += btmp[osize_b*8 - osize:]
+        b += btmp[offset:]
     return b.tobytes()
 
 
@@ -122,11 +123,7 @@ class RGeneratorPCG(RGenerator):
         return self.gen.uniform(low, high, size=size)
 
 
-def rand_moduli(mod=None, gen: Optional[RGenerator] = None):
-    if gen is None:
-        while True:
-            yield random.randint(0, mod - 1)
-
+def rand_moduli(mod, gen: RGenerator):
     while True:
         yield from gen.randint(0, mod - 1, 2048)
 
@@ -200,12 +197,12 @@ class ModSpreader:
         return self.spread(z)
 
     def spread_reject(self, z):
-        """Rejection sampling, smaller data size, works!"""
+        """6: Rejection sampling, smaller data size, works!"""
         x = (self.m * next(self.gen_randint_0_tp)) + z
         return x if x < self.max else None
 
     def spread_gen(self, z):
-        """Rejection sampling, with aux gen, works also!"""
+        """7: Rejection sampling, with aux gen, works also!"""
         x = (self.m * next(self.gen_randint_0_tp)) + z
         return x if x < self.max else next(self.gen_randint_0_maxm1)
 
@@ -221,7 +218,7 @@ class ModSpreader:
         return x if x < self.max else None
 
     def spread_inverse_sample(self, z):
-        """Inversion sampling, https://en.wikipedia.org/wiki/Inverse_transform_sampling
+        """10: Inversion sampling, https://en.wikipedia.org/wiki/Inverse_transform_sampling
         Intuition: use z to cover the whole interval. Without correction, there would be gaps (e.g., hit only each 4th
           number). Use then U() generator to cover the holes. Minimum rejections.
 
@@ -230,7 +227,7 @@ class ModSpreader:
           - to expand the range of a function, generate sub-step precision with an uniform distribution
             (to spread outcomes across the window)
           - Resulting distribution expanded on the whole interval:
-            (z / (m-1)) + U(0, 1/(m-1)),   note U interval is open on the upper end. This is OK, not to hit next box.
+            (z / (m-1)) + U(0, 1/(m-1)), note U interval is open on the upper end. This is OK, not to hit next box.
           - Rejections: minimal, only if the z = m-1, we are hitting few numbers above the interval. Those are rejected.
           - Potential problem: if z=m-1 is biased, the chance of discovering this is a bit lower than other numbers.
             Due to spread to higher numbers, it is spread across mx / (m-1), thus prob. is (m-1) / mx
@@ -243,6 +240,10 @@ class ModSpreader:
     def spread_rand(self, z):
         x = int(next(self.gen_randint_0_maxm1))
         return x if x < self.max else None
+
+    def spread_mask(self, z):
+        z %= self.m
+        return z | (1 << 15)
 
 
 class DataGenerator:
@@ -257,6 +258,9 @@ class DataGenerator:
         if self.args.debug:
             coloredlogs.install(level=logging.DEBUG)
 
+        self.work()
+
+    def work(self):
         seed = binascii.unhexlify(self.args.seed) if self.args.seed else None
         if self.args.rgen in ['pcg', 'pcg32', 'pcg64', 'numpy', 'np']:
             self.rng = RGeneratorPCG(seed)
@@ -288,7 +292,7 @@ class DataGenerator:
 
         read_multiplier = 8 / gcd(isize, 8)
         read_chunk_base = int(isize * read_multiplier)
-        read_chunk = read_chunk_base * max(1, 8192 // read_chunk_base)  # expand a bit
+        read_chunk = read_chunk_base * max(1, 65_536 // read_chunk_base)  # expand a bit
         max_len = self.args.max_len
         max_out = self.args.max_out
         cur_len = 0
@@ -324,6 +328,8 @@ class DataGenerator:
                 spread_func = spreader.spread_inverse_sample
             elif st == 11:
                 spread_func = spreader.spread_rand
+            elif st == 12:
+                spread_func = spreader.spread_mask
             else:
                 raise ValueError('No such strategy')
 
@@ -332,7 +338,7 @@ class DataGenerator:
 
         b = bitarray(endian='big')
         bout = bitarray(endian='big')
-        b_filler = bitarray(isize_b*8 - isize, endian='big')
+        b_filler = bitarray(isize_b * 8 - isize, endian='big')
         b_filler.setall(0)
         btmp = bitarray(endian='big')
         osize_mask = (2 ** (osize_b * 8)) - 1
@@ -365,13 +371,19 @@ class DataGenerator:
 
             # Manage output size constrain in bits
             cblen = len(data) * 8
+            last_chunk_sure = False
             if max_len is not None and cur_len + cblen > max_len:
                 rest = max_len - cur_len
                 data = data[:rest//8]
                 cblen = rest
+                last_chunk_sure = True
 
             cur_len += cblen
             elems = cblen // isize
+
+            if cblen % isize != 0 and not last_chunk_sure:
+                logger.warning('Read bits not aligned, %s vs isize %s, mod: %s. May happen for the last chunk.'
+                               % (cblen, isize, cblen % isize))
 
             b.clear()
             b.frombytes(data)
@@ -412,7 +424,6 @@ class DataGenerator:
             if finishing:
                 output_fh.flush()
                 break
-
         time_elapsed = time.time() - time_start
         logger.info("Number of rejects: %s, overflows: %s, time: %s s" % (nrejects, noverflows, time_elapsed, ))
         if self.args.ofile:
