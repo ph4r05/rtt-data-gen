@@ -3,7 +3,7 @@ import sys
 from setuptools import setup
 from setuptools import find_packages
 
-version = '0.0.6'
+version = '0.0.9'
 
 # Please update tox.ini when modifying dependency version requirements
 install_requires = [
@@ -12,9 +12,7 @@ install_requires = [
     'future',
     'coloredlogs',
     'jsonpath-ng',
-    'jsons',
 
-    'sarge>=0.1.4',
     'ph4-runner',
     'bitarray_ph4>=1.9.0',
     'randomgen',
