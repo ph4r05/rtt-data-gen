@@ -311,11 +311,11 @@ class DataGenerator:
 
         proc_stdout = None
         if direct_file:
-            proc_stdout = sys.stdout  # exec cmd writes to file directly.
+            proc_stdout = sys.stdout.buffer  # exec cmd writes to file directly.
         elif self.args.data_path:
             proc_stdout = open(self.args.data_path, 'wb+')
         else:
-            proc_stdout = sys.stdout
+            proc_stdout = sys.stdout.buffer
 
         if is_qrng:
             creds = self.substitute_template(stream['cred_file'])
