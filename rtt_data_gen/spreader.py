@@ -456,7 +456,7 @@ class DataGenerator:
                         noverflows += 1
 
                     oelem = int(spreaded) & osize_mask
-                    oseq.dump([oelem])
+                    oseq.dump_int(oelem)
 
                 cur_out += osize
                 if max_out is not None and cur_out >= max_out:
@@ -465,6 +465,7 @@ class DataGenerator:
             finishing = data is None \
                         or (max_len is not None and max_len <= cur_len) \
                         or (max_out is not None and max_out <= cur_out)
+            oseq.maybe_flush(finishing)
 
             if finishing:
                 oseq.flush()
