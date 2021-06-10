@@ -50,13 +50,13 @@ def counter(offset=0, mod=None):
             ctr %= mod
 
 
-def number_streamer(gen, osize, nbytes):
+def number_streamer(gen, osize, nbytes, endian='big'):
     osize_b = int(math.ceil(osize/8.))
-    b = bitarray(endian='big')
-    btmp = bitarray(endian='big')
+    b = bitarray(endian=endian)
+    btmp = bitarray(endian=endian)
     offset = osize_b * 8 - osize
     for x in itertools.islice(gen, nbytes*8 // osize):
-        xb = int(x).to_bytes(osize_b, 'big')
+        xb = int(x).to_bytes(osize_b, endian)
         btmp.clear()
         btmp.frombytes(xb)
         b += btmp[offset:]
@@ -175,6 +175,9 @@ class ModSpreader:
         self.gen_randint_0_maxm1 = rand_gen_randint(0, self.max - 1, gen)
         self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1)), gen)
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
+
+        if self.max < self.m:
+            logger.warning("Moduli is greater than maximum, some strategies might not work")
 
     def spread(self, z):
         """Spread number z inside range (0 ... m) to osize"""
@@ -320,7 +323,9 @@ class DataGenerator:
         spreader = ModSpreader(m=mod, osize=osize, gen=self.rng) if mod else None
         spread_func = lambda x: x  # identity by default
         output_fh = sys.stdout.buffer if not self.args.ofile else open(self.args.ofile, 'w+b')
-        oseq = OutputSequencer(ostream=output_fh, fsize=osize, osize=osize, use_bit_precision=is_binary)
+        oseq = OutputSequencer(ostream=output_fh, fsize=osize, osize=osize, endian=self.args.output_endian,
+                               use_bit_precision=is_binary or self.args.binary_precision,
+                               hexlify=self.args.ohex)
 
         if spreader:
             st = self.args.strategy
@@ -356,16 +361,16 @@ class DataGenerator:
         gen_ctr = counter(self.args.inp_ctr_off, mod) if self.args.inp_ctr else None
         gen_moduli = rand_moduli(mod, self.rng) if self.args.rand_mod else None
 
-        b = bitarray(endian='big')
-        b_filler = bitarray(isize_b * 8 - isize, endian='big')
+        b = bitarray(endian=self.args.input_endian)
+        b_filler = bitarray(isize_b * 8 - isize, endian=self.args.input_endian)
         b_filler.setall(0)
         b_pad = None
         b_pad_rand = None
         b_pad_rand_size = max(8, 8 * int(math.ceil((osize - isize) / 8.)))
         if is_binary and osize > isize:
-            b_pad = bitarray(osize - isize, endian='big')
+            b_pad = bitarray(osize - isize, endian=self.args.output_endian)
             b_pad.setall(0)
-            b_pad_rand = bitarray(b_pad_rand_size, endian='big')
+            b_pad_rand = bitarray(b_pad_rand_size, endian=self.args.output_endian)
             b_pad_rand.setall(0)
 
         osize_mask = (2 ** (osize_b * 8)) - 1
@@ -373,23 +378,26 @@ class DataGenerator:
         noverflows = 0
         time_start = time.time()
         logger.info("Generating data")
+        fh = open(self.args.file, 'rb+') if self.args.file else None
 
         while True:
             if self.args.stdin:
                 data = sys.stdin.buffer.read(read_chunk)
+            elif fh is not None:
+                data = fh.read(read_chunk)
             elif gen_ctr:
-                data = number_streamer(gen_ctr, isize, read_chunk)
+                data = number_streamer(gen_ctr, isize, read_chunk, endian=self.args.input_endian)
             elif gen_moduli:
-                data = number_streamer(gen_moduli, isize, read_chunk)
+                data = number_streamer(gen_moduli, isize, read_chunk, endian=self.args.input_endian)
             elif self.args.rand_mod_bias1:
                 gg = rand_moduli_bias_frac(mod, self.rng, 0.0001, 10)
-                data = number_streamer(gg, isize, read_chunk)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
             elif self.args.rand_mod_bias2:
                 gg = rand_moduli_bias_frac(mod, self.rng, 0.01, 7)
-                data = number_streamer(gg, isize, read_chunk)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
             elif self.args.rand_mod_bias3:
                 gg = rand_moduli_bias_frac(mod, self.rng, 0.01, 4)
-                data = number_streamer(gg, isize, read_chunk)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
             else:
                 data = self.rng.randbytes(read_chunk)
 
@@ -439,7 +447,7 @@ class DataGenerator:
                     # F_n, Z_n
                     cbits = b_filler + cbits
                     cbytes = cbits.tobytes()
-                    celem = int.from_bytes(bytes=cbytes, byteorder='big')
+                    celem = int.from_bytes(bytes=cbytes, byteorder=self.args.input_endian)
                     spreaded = spread_func(celem)
                     if spreaded is None:
                         nrejects += 1
@@ -475,6 +483,8 @@ class DataGenerator:
                             help='enables debug mode')
         parser.add_argument('-i', '--stdin', dest='stdin', action='store_const', const=True,
                             help='Read input stdin')
+        parser.add_argument('-f', '--file', dest='file',
+                            help='Input file to read')
         parser.add_argument('-r', '--rand', dest='rand', action='store_const', const=True,
                             help='Generate randomness internally')
         parser.add_argument('--rgen', dest='rgen', default='aes',
@@ -498,6 +508,12 @@ class DataGenerator:
                             help='Input is binary field, no moduli')
         parser.add_argument('--br', '--binary-randomize', dest='binary_randomize', action='store_const', const=True,
                             help='Input is binary field, no moduli, randomize padded values')
+        parser.add_argument('--bp', '--binary-precision', dest='binary_precision', action='store_const', const=True,
+                            help='Force binary precision, always use bitarrays')
+        parser.add_argument('--ie', '--input-endian', dest='input_endian', default='big',
+                            help='Input endianness')
+        parser.add_argument('--oe', '--output-endian', dest='output_endian', default='big',
+                            help='Input endianness')
         parser.add_argument('-s', '--seed', dest='seed',
                             help='Seed for random generator')
         parser.add_argument('-m', '--mod', dest='mod',
