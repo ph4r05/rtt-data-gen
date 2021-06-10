@@ -15,7 +15,7 @@ from bitarray import bitarray
 from numpy.random import Generator, PCG64
 from randomgen.aes import AESCounter
 from randomgen.chacha import ChaCha
-
+from rtt_data_gen.base import OutputSequencer
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level=logging.INFO)
@@ -151,6 +151,14 @@ def rand_moduli_bias_frac(mod, gen: Optional[RGenerator], p=0.001, frac=10):
 
 
 class ModSpreader:
+    """
+    Takes a number from Z_m and with auxiliar randomness coin flips distributes it to N bits uniformly.
+
+    If input distribution over Z_m is uniform, resulting distribution over 2**N should be uniform as well.
+    Alternatively, the bias in th input distribution should be present also in the stretched distribution.
+
+    Strategies that work well: 7, 6, 10. Rejection sampling / inversion sampling.
+    """
     def __init__(self, m=None, osize=None, gen: Optional[RGenerator] = None):
         self.m = m
         self.osize = osize
@@ -197,12 +205,17 @@ class ModSpreader:
         return self.spread(z)
 
     def spread_reject(self, z):
-        """6: Rejection sampling, smaller data size, works!"""
+        """6: Rejection sampling, smaller data size, works!
+        Idea: generate random m-offset, add z to the offset. If goes above the limit, reject the sample.
+        Any other attempt to deal with overflows usually ends in skewing the distribution.
+        """
         x = (self.m * next(self.gen_randint_0_tp)) + z
         return x if x < self.max else None
 
     def spread_gen(self, z):
-        """7: Rejection sampling, with aux gen, works also!"""
+        """7: Rejection sampling, with aux gen, works also!
+        Idea: similar to spread_reject, instead of rejecting the sample we generate uniform number from aux generator.
+        Useful for preserving data size"""
         x = (self.m * next(self.gen_randint_0_tp)) + z
         return x if x < self.max else next(self.gen_randint_0_maxm1)
 
@@ -223,13 +236,15 @@ class ModSpreader:
           number). Use then U() generator to cover the holes. Minimum rejections.
 
           - z is in the interval [0, m-1], uniform. Then Y = z/(m-1) is on [0, 1]
-          - step = 1/(m-1) is a difference of two values from Y distribution, numbers outside the step are not present.
+          - step = 1/(m-1) is a difference of two closest values from Y distribution, numbers "inside" the step
+            are not present.  |-----|-----|------|  (gap ----- is not covered by Y, just | are covered)
           - to expand the range of a function, generate sub-step precision with an uniform distribution
-            (to spread outcomes across the window)
-          - Resulting distribution expanded on the whole interval:
+            (to spread outcomes across the step window)
+          - Resulting distribution expanded on the whole interval: Y + U(0, step) =
             (z / (m-1)) + U(0, 1/(m-1)), note U interval is open on the upper end. This is OK, not to hit next box.
-          - Rejections: minimal, only if the z = m-1, we are hitting few numbers above the interval. Those are rejected.
-          - Potential problem: if z=m-1 is biased, the chance of discovering this is a bit lower than other numbers.
+          - Rejections: minimal, only if the z == m-1, we are hitting few numbers above the interval.
+            Those are rejected.
+          - Potential problem: if z == m-1 is biased, the chance of discovering this is a bit lower than other numbers.
             Due to spread to higher numbers, it is spread across mx / (m-1), thus prob. is (m-1) / mx
         """
         z %= self.m
@@ -273,6 +288,8 @@ class DataGenerator:
         else:
             raise ValueError('Unknown generator: %s' % (self.args.rgen, ))
 
+        is_binary = self.args.binary or self.args.binary_randomize
+        is_binary_rand = self.args.binary_randomize
         mod = int(self.args.mod, 16) if self.args.mod else None
         mod_size = int(math.ceil(math.log2(mod))) if mod else None
 
@@ -289,6 +306,8 @@ class DataGenerator:
 
         osize_b = int(math.ceil(osize / 8.))
         isize_b = int(math.ceil(isize / 8.))
+        osize_baligned = osize_b * 8 == osize
+        isize_baligned = isize_b * 8 == isize
 
         read_multiplier = 8 / gcd(isize, 8)
         read_chunk_base = int(isize * read_multiplier)
@@ -301,6 +320,7 @@ class DataGenerator:
         spreader = ModSpreader(m=mod, osize=osize, gen=self.rng) if mod else None
         spread_func = lambda x: x  # identity by default
         output_fh = sys.stdout.buffer if not self.args.ofile else open(self.args.ofile, 'w+b')
+        oseq = OutputSequencer(ostream=output_fh, fsize=osize, osize=osize, use_bit_precision=is_binary)
 
         if spreader:
             st = self.args.strategy
@@ -337,10 +357,17 @@ class DataGenerator:
         gen_moduli = rand_moduli(mod, self.rng) if self.args.rand_mod else None
 
         b = bitarray(endian='big')
-        bout = bitarray(endian='big')
         b_filler = bitarray(isize_b * 8 - isize, endian='big')
         b_filler.setall(0)
-        btmp = bitarray(endian='big')
+        b_pad = None
+        b_pad_rand = None
+        b_pad_rand_size = max(8, 8 * int(math.ceil((osize - isize) / 8.)))
+        if is_binary and osize > isize:
+            b_pad = bitarray(osize - isize, endian='big')
+            b_pad.setall(0)
+            b_pad_rand = bitarray(b_pad_rand_size, endian='big')
+            b_pad_rand.setall(0)
+
         osize_mask = (2 ** (osize_b * 8)) - 1
         nrejects = 0
         noverflows = 0
@@ -390,22 +417,39 @@ class DataGenerator:
 
             # Parse on ints
             for i in range(elems):
-                cbits = b_filler + b[i * isize: (i+1) * isize]
+                cbits = b[i * isize: (i+1) * isize]
 
-                cbytes = cbits.tobytes()
-                celem = int.from_bytes(bytes=cbytes, byteorder='big')
-                spreaded = spread_func(celem)
-                if spreaded is None:
-                    nrejects += 1
-                    continue
-                if spreaded > osize_mask:
-                    noverflows += 1
+                if is_binary:
+                    # Binary field, covers full bit-width
+                    if isize == osize:
+                        oseq.dump_bits(cbits)
 
-                oelem = int(spreaded) & osize_mask
-                oelem_b = oelem.to_bytes(osize_b, 'big')
-                btmp.clear()
-                btmp.frombytes(oelem_b)
-                bout += btmp[osize_b * 8 - osize:]
+                    elif isize < osize:  # pad with zeros or random bits
+                        if is_binary_rand:
+                            rnd_data = self.rng.randbytes(b_pad_rand_size / 8)
+                            b_pad_rand.clear()
+                            b_pad_rand.frombytes(rnd_data)
+                            b_pad = b_pad_rand[:osize - isize]
+                        oseq.dump_bits(b_pad + cbits)
+
+                    else:  # isize > osize, truncate, take right-most (big-endian encoding -> least significant bits)
+                        oseq.dump_bits(cbits[-(isize - osize):])
+
+                else:
+                    # F_n, Z_n
+                    cbits = b_filler + cbits
+                    cbytes = cbits.tobytes()
+                    celem = int.from_bytes(bytes=cbytes, byteorder='big')
+                    spreaded = spread_func(celem)
+                    if spreaded is None:
+                        nrejects += 1
+                        continue
+                    if spreaded > osize_mask:
+                        noverflows += 1
+
+                    oelem = int(spreaded) & osize_mask
+                    oseq.dump([oelem])
+
                 cur_out += osize
                 if max_out is not None and cur_out >= max_out:
                     break
@@ -413,17 +457,12 @@ class DataGenerator:
             finishing = data is None \
                         or (max_len is not None and max_len <= cur_len) \
                         or (max_out is not None and max_out <= cur_out)
-            if (len(bout) % 8 == 0 and len(bout) >= 2048) or finishing:
-                tout = bout.tobytes()
-                if self.args.ohex:
-                    tout = binascii.hexlify(tout)
-
-                output_fh.write(tout)
-                bout = bitarray(endian='big')
 
             if finishing:
+                oseq.flush()
                 output_fh.flush()
                 break
+
         time_elapsed = time.time() - time_start
         logger.info("Number of rejects: %s, overflows: %s, time: %s s" % (nrejects, noverflows, time_elapsed, ))
         if self.args.ofile:
@@ -441,17 +480,24 @@ class DataGenerator:
         parser.add_argument('--rgen', dest='rgen', default='aes',
                             help='Random number generator implementation (aes)')
         parser.add_argument('--inp-rand-mod', dest='rand_mod', action='store_const', const=True,
-                            help='Generate randomness internally, generating random integer in mod range')
+                            help='Input method: Generate randomness internally, generating random integer in mod range')
         parser.add_argument('--inp-rand-mod-bias1', dest='rand_mod_bias1', action='store_const', const=True,
-                            help='Generate randomness internally, generating random integer in mod range, bias1')
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias1')
         parser.add_argument('--inp-rand-mod-bias2', dest='rand_mod_bias2', action='store_const', const=True,
-                            help='Generate randomness internally, generating random integer in mod range, bias2')
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias2')
         parser.add_argument('--inp-rand-mod-bias3', dest='rand_mod_bias3', action='store_const', const=True,
-                            help='Generate randomness internally, generating random integer in mod range, bias3')
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias3')
         parser.add_argument('--inp-ctr', dest='inp_ctr', action='store_const', const=True,
-                            help='Input counter generator')
+                            help='Input method: Input counter generator')
         parser.add_argument('--inp-ctr-off', dest='inp_ctr_off', type=int, default=0,
                             help='Input counter generator offset')
+        parser.add_argument('-b', '--binary', dest='binary', action='store_const', const=True,
+                            help='Input is binary field, no moduli')
+        parser.add_argument('--br', '--binary-randomize', dest='binary_randomize', action='store_const', const=True,
+                            help='Input is binary field, no moduli, randomize padded values')
         parser.add_argument('-s', '--seed', dest='seed',
                             help='Seed for random generator')
         parser.add_argument('-m', '--mod', dest='mod',
