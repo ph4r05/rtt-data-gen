@@ -173,7 +173,7 @@ class ModSpreader:
 
         self.gen_randint_0_tp = rand_gen_randint(0, self.tp, gen)
         self.gen_randint_0_maxm1 = rand_gen_randint(0, self.max - 1, gen)
-        self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1)), gen)
+        self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1.0)), gen)
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
 
         if self.max < self.m:
@@ -251,7 +251,7 @@ class ModSpreader:
             Due to spread to higher numbers, it is spread across mx / (m-1), thus prob. is (m-1) / mx
         """
         z %= self.m
-        u = (z / (self.m - 1))  # uniform dist on [0, 1], step is 1/(m-1)
+        u = (z / (self.m - 1.0))  # uniform dist on [0, 1], step is 1/(m-1)
         x = int((u + next(self.gen_uniform_0_step)) * self.max_mask)
         return x if x < self.max else None
 
@@ -319,6 +319,7 @@ class DataGenerator:
         max_out = self.args.max_out
         cur_len = 0
         cur_out = 0
+        n_elems_read = 0
 
         spreader = ModSpreader(m=mod, osize=osize, gen=self.rng) if mod else None
         spread_func = lambda x: x  # identity by default
@@ -425,6 +426,7 @@ class DataGenerator:
 
             # Parse on ints
             for i in range(elems):
+                n_elems_read += 1
                 cbits = b[i * isize: (i+1) * isize]
 
                 if is_binary:
@@ -473,7 +475,8 @@ class DataGenerator:
                 break
 
         time_elapsed = time.time() - time_start
-        logger.info("Number of rejects: %s, overflows: %s, time: %s s" % (nrejects, noverflows, time_elapsed, ))
+        logger.info("Number of rejects: %s, overflows: %s, elems: %s, time: %s s"
+                    % (nrejects, noverflows, n_elems_read, time_elapsed, ))
         if self.args.ofile:
             output_fh.close()
 
