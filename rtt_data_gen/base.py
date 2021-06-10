@@ -142,6 +142,8 @@ class OutputSequencer:
         self.fsize_b = int(math.ceil(self.fsize / 8.))  # full size in bytes (ceiled)
         self.osize = osize  # bit size of the output per element
         self.osize_b = int(math.ceil(self.osize / 8.))  # full size in bytes (ceiled)
+        self.osize_aligned = self.osize_b * 8 == self.osize
+        self.bit_append_possible = self.fsize == self.osize and self.osize_aligned
         self.hexlify = hexlify
         self.use_bit_precision = use_bit_precision
 
@@ -182,9 +184,9 @@ class OutputSequencer:
             self.dump_bits(self.btmp, flush)
 
     def dump_bits(self, buff, flush=False):
-        if self.osize == self.fsize:
+        if self.bit_append_possible:
             self.bout += buff
-        elif self.osize < self.fsize:
+        elif self.osize <= self.fsize:
             self.bout += buff[self.osize_b * 8 - self.osize:]
         else:
             self.bout += self.bfill
