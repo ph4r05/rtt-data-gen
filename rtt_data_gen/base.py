@@ -231,7 +231,7 @@ class OutputSequencer:
         bout += buff
 
     def maybe_flush(self, flush=False):
-        if (len(self.bout) % 8 == 0 and len(self.bout) >= 2048) or flush:
+        if not self.whole_bytes and ((len(self.bout) % 8 == 0 and len(self.bout) >= 2048) or flush):
             self._flush()
 
     def flush(self):
