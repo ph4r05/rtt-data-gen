@@ -104,14 +104,65 @@ class RGeneratorRandom(RGenerator):
 
 
 class RGeneratorPCG(RGenerator):
+    INT64_LIMIT = 2**63
+
     def __init__(self, seed=None, cls=None, cls_kw=None):
         super().__init__()
         seedx = int.from_bytes(bytes=seed, byteorder='big') if seed else None
         self.rand = PCG64(seedx) if cls is None else cls(seedx, **(cls_kw or {}))
         self.gen = Generator(self.rand)
+        self.warned_high_inv = False
+        self.warned_high_uni = False
 
     def randint(self, low, high, size=None):
-        return self.gen.integers(low, high, size=size, endpoint=True)
+        if high >= self.INT64_LIMIT:
+            return self.randint_bytes_rejection(low, high, size)
+
+        return self.gen.integers(low, high, size=size, endpoint=True)  # high is too high for some moduli, >= 2**64
+
+    def randint_bytes_rejection(self, low, high, size=None):
+        res = []
+        single = size is None
+
+        mag = high - low
+        big_mag = mag >= self.INT64_LIMIT
+        if big_mag:
+            byte_size = int(math.ceil(math.log2(mag) / 8))
+            sampler = lambda: int.from_bytes(self.randbytes(byte_size), byteorder='big')
+        else:
+            sampler = lambda: self.gen.integers(0, mag, endpoint=True)
+
+        for _ in range(size or 1):
+            while True:  # rejection sampling
+                guess = low + sampler()
+                if guess <= high:
+                    break
+
+            if single:
+                return guess
+            else:
+                res.append(guess)
+        return res
+
+    def randint_inversion(self, low, high, size=None):
+        """Does not work well if high >= 2**63 due to float precision"""
+        mag = high - low
+        res = []
+        single = size is None
+
+        if not self.warned_high_inv and mag >= self.INT64_LIMIT:
+            self.warned_high_inv = True
+            logger.warning('Magnitude is higher than INT64, results can be invalid or imprecise')
+
+        unifs = self.uniform(0, 1, size)
+        for i in range(size or 1):
+            uu = unifs if single else unifs[i]
+            guess = int(mag * uu) + low
+            if single:
+                return guess
+            else:
+                res.append(guess)
+        return res
 
     def randbytes(self, length):
         return self.gen.bytes(length)
@@ -120,6 +171,10 @@ class RGeneratorPCG(RGenerator):
         return self.randint(0, (2 << bits)-1)
 
     def uniform(self, low, high, size=None):
+        if not self.warned_high_uni and high >= self.INT64_LIMIT:
+            self.warned_high_uni = True
+            logger.warning('High is higher than INT64, results can be invalid or imprecise')
+
         return self.gen.uniform(low, high, size=size)
 
 
@@ -178,6 +233,8 @@ class ModSpreader:
 
         if self.max < self.m:
             logger.warning("Moduli is greater than maximum, some strategies might not work")
+        if max(self.max_mask, self.m - 1) >= 2**63:
+            logger.info("Working with numbers >= INT64.MAX, some strategies won't work (e.g., inversion sampling)")
 
     def spread(self, z):
         """Spread number z inside range (0 ... m) to osize"""
@@ -237,6 +294,7 @@ class ModSpreader:
         """10: Inversion sampling, https://en.wikipedia.org/wiki/Inverse_transform_sampling
         Intuition: use z to cover the whole interval. Without correction, there would be gaps (e.g., hit only each 4th
           number). Use then U() generator to cover the holes. Minimum rejections.
+        Warning: due to float multiplication, this method works only for sizes up 2**64
 
           - z is in the interval [0, m-1], uniform. Then Y = z/(m-1) is on [0, 1]
           - step = 1/(m-1) is a difference of two closest values from Y distribution, numbers "inside" the step
