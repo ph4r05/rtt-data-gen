@@ -226,7 +226,7 @@ class ModSpreader:
         self.rm = self.max - self.tp * self.m
         self.msize = int(math.ceil(math.log2(m)))
 
-        self.gen_randint_0_tp = rand_gen_randint(0, self.tp, gen)
+        self.gen_randint_0_tp = rand_gen_randint(0, max(0, self.tp), gen)
         self.gen_randint_0_maxm1 = rand_gen_randint(0, self.max - 1, gen)
         self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1.0)), gen)
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
@@ -235,6 +235,23 @@ class ModSpreader:
             logger.warning("Moduli is greater than maximum, some strategies might not work")
         if max(self.max_mask, self.m - 1) >= 2**63:
             logger.info("Working with numbers >= INT64.MAX, some strategies won't work (e.g., inversion sampling)")
+
+        if self.max >= self.m:
+            # Rejection ratio: prob of highest m-offset * portion of overflowing chunk out of m
+            rej_ratio = 1 / (self.tp + 1) * ((self.tp + 1) * self.m - self.max) / self.m
+            logger.info("Expected rejection ratio: %s" % (rej_ratio,))
+
+        elif self.max < self.m:
+            # Masking bias: full m inside max gives 1 weight to max interval values.
+            # If x*m is on boundary of max, lower values give 1 weight more than values above m
+            mask_bias_0 = self.m % self.max
+            mask_bias_m = min(mask_bias_0, self.max - mask_bias_0)
+            mask_bias_r = mask_bias_m / self.max_mask
+            mask_bias_w = self.m // self.max  # how many full-widths, base. Bias is then mask_bias_w+1 / mask_bias_w
+            mask_bias_ws = '%s:%s' % ((mask_bias_w, mask_bias_w + 1) if mask_bias_0 == mask_bias_m
+                                      else (mask_bias_w + 1, mask_bias_w))
+            logger.info("Expected masking bias on range %s (%s values), weight %s"
+                        % (mask_bias_r, mask_bias_m, mask_bias_ws))
 
     def spread(self, z):
         """Spread number z inside range (0 ... m) to osize"""
@@ -317,9 +334,14 @@ class ModSpreader:
         x = int(next(self.gen_randint_0_maxm1))
         return x if x < self.max else None
 
-    def spread_mask(self, z):
+    def spread_mask_fixed(self, z):
         z %= self.m
         return z | (1 << 15)
+
+    def spread_mask(self, z):
+        """Masking with osize. If 2**osize / m is not an integer, it is biased"""
+        z %= self.m
+        return z & self.max_mask
 
 
 class DataGenerator:
@@ -414,10 +436,10 @@ class DataGenerator:
                             'generates uniform values for drops)')
             elif st == 8:
                 spread_func = spreader.spread_wider
-                logger.info('Strategy: spread_wider (drops input (xor))')
+                logger.info('Strategy: spread_wider (drops input (xor), biased for large osize or mod)')
             elif st == 9:
                 spread_func = spreader.spread_wider_reject
-                logger.info('Strategy: spread_wider_reject (drops input (xor))')
+                logger.info('Strategy: spread_wider_reject (drops input (xor), biased for large osize or mod)')
             elif st == 10:
                 spread_func = spreader.spread_inverse_sample
                 logger.info('Strategy: inversion sampling (works on limited range)')
@@ -427,8 +449,14 @@ class DataGenerator:
                 spread_func = spreader.spread_rand
                 logger.info('Strategy: spread_rand (uniform, ignores input)')
             elif st == 12:
+                spread_func = spreader.spread_mask_fixed
+                logger.info('Strategy: spread_mask_fixed (input & mask, biased)')
+            elif st == 13:
                 spread_func = spreader.spread_mask
-                logger.info('Strategy: spread_mask (input & mask, biased)')
+                logger.info('Strategy: spread_mask (slight bias, '
+                            'masks input with osize maks, works only for 2*mod >= 2**osize)')
+                if 2*spreader.m < spreader.max_mask:
+                    logger.warning('Masking strategy is highly biased with 2*mod < 2**osize')
             else:
                 raise ValueError('No such strategy')
 
