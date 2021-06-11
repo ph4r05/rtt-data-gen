@@ -389,31 +389,46 @@ class DataGenerator:
         if spreader:
             st = self.args.strategy
             if st == 0:
-                pass  # identity
+                logger.info('Strategy: identity')
             elif st == 1:
                 spread_func = spreader.spread
+                logger.info('Strategy: spread (biased)')
             elif st == 2:
                 spread_func = spreader.spread_weak
+                logger.info('Strategy: spread_weak (biased, strong)')
             elif st == 3:
                 spread_func = spreader.spread_weak_minus
+                logger.info('Strategy: spread_weak_minus (biased, strong)')
             elif st == 4:
                 spread_func = spreader.spread_weak_weird
+                logger.info('Strategy: spread_weak_weird (biased, strong)')
             elif st == 5:
                 spread_func = spreader.spread_flat
+                logger.info('Strategy: spread_weak_weird (biased, significant)')
             elif st == 6:
                 spread_func = spreader.spread_reject
+                logger.info('Strategy: spread_reject (rejection sampling, unbiased, drops values out of range)')
             elif st == 7:
                 spread_func = spreader.spread_gen
+                logger.info('Strategy: spread_reject (rejection sampling, unbiased, '
+                            'generates uniform values for drops)')
             elif st == 8:
                 spread_func = spreader.spread_wider
+                logger.info('Strategy: spread_wider (drops input (xor))')
             elif st == 9:
                 spread_func = spreader.spread_wider_reject
+                logger.info('Strategy: spread_wider_reject (drops input (xor))')
             elif st == 10:
                 spread_func = spreader.spread_inverse_sample
+                logger.info('Strategy: inversion sampling (works on limited range)')
+                if max(spreader.m, spreader.max_mask) >= 2**50:
+                    logger.warning('Inversion sampling does not work for large numbers (float precision)')
             elif st == 11:
                 spread_func = spreader.spread_rand
+                logger.info('Strategy: spread_rand (uniform, ignores input)')
             elif st == 12:
                 spread_func = spreader.spread_mask
+                logger.info('Strategy: spread_mask (input & mask, biased)')
             else:
                 raise ValueError('No such strategy')
 
