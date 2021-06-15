@@ -10,7 +10,11 @@ import random
 import logging
 import coloredlogs
 import itertools
-from typing import Optional
+import operator
+import functools
+import decimal
+import fractions
+from typing import Optional, Union
 from bitarray import bitarray
 from numpy.random import Generator, PCG64
 from randomgen.aes import AESCounter
@@ -25,6 +29,13 @@ def gcd(x, y):
     while y:
         x, y = y, x % y
     return x
+
+
+def comp_rejection_ratio(modulus, osize_interval):
+    """Returns a probability that a random draw from [0, modulus) will be rejected when spreading
+    to uniform distribution to [0, osize_interval). Holds only for modulus <= osize_interval"""
+    tp = math.ceil(osize_interval / modulus) - 1  # number of full-sized ms inside the range
+    return 1 / (tp + 1) * ((tp + 1) * modulus - osize_interval) / modulus
 
 
 def randbytes(x):
@@ -64,6 +75,9 @@ def number_streamer(gen, osize, nbytes, endian='big'):
 
 
 class RGenerator:
+    FLOAT_PREC = fractions.Fraction(1, 1 << 50)
+    FLOAT_MULT = fractions.Fraction(1 << 50, 1)
+
     def __init__(self):
         pass
 
@@ -78,6 +92,40 @@ class RGenerator:
 
     def uniform(self, low, high, size=None):
         raise ValueError()
+
+    def random(self, size=None):
+        raise ValueError()
+
+    def random_precise(self, precision: Union[None, int, float] = 50, size=None):
+        """Returns fractional on [0,1) with given precision (large number computation). Double precision is 53 bits."""
+        steps = math.ceil((precision or 50) / 50.)
+
+        prec = 1 << 50
+        ssize = size or 1
+        single = size is None
+
+        # 50-bit precision random values
+        vals = (math.floor(x * prec) for x in self.random(steps * ssize))
+        res = [None] * ssize
+
+        for oi in range(ssize):
+            cres = fractions.Fraction(0, 1)
+            sub = self.FLOAT_PREC
+            for i in range(steps):
+                cres += fractions.Fraction(next(vals)) * sub
+                sub *= self.FLOAT_PREC
+
+            if single:
+                return cres
+            res[oi] = cres
+        return res
+
+    def uniform_precise(self, low, high, size=None, precision: Union[int, float] = 50):
+        mag = high + 1 - low
+        if size is None:
+            return low + self.random_precise(precision, size) * mag
+
+        return [low + (x * mag) for x in self.random_precise(precision, size)]
 
 
 class RGeneratorRandom(RGenerator):
@@ -102,9 +150,15 @@ class RGeneratorRandom(RGenerator):
             return random.uniform(low, high)
         return [random.uniform(low, high) for _ in range(size)]
 
+    def random(self, size=None):
+        if size is None:
+            return random.random()
+        return [random.random() for _ in range(size)]
+
 
 class RGeneratorPCG(RGenerator):
     INT64_LIMIT = 2**63
+    DOUBLE_LIMIT = 2**53
 
     def __init__(self, seed=None, cls=None, cls_kw=None):
         super().__init__()
@@ -121,6 +175,7 @@ class RGeneratorPCG(RGenerator):
         return self.gen.integers(low, high, size=size, endpoint=True)  # high is too high for some moduli, >= 2**64
 
     def randint_bytes_rejection(self, low, high, size=None):
+        """Generates large random integers, above 2**63, using rejection sampling from random bytes"""
         res = []
         single = size is None
 
@@ -145,16 +200,16 @@ class RGeneratorPCG(RGenerator):
         return res
 
     def randint_inversion(self, low, high, size=None):
-        """Does not work well if high >= 2**63 due to float precision"""
+        """Does not work well if high >= 2**53 due to float precision"""
         mag = high - low
         res = []
         single = size is None
 
-        if not self.warned_high_inv and mag >= self.INT64_LIMIT:
+        if not self.warned_high_inv and mag >= self.DOUBLE_LIMIT:
             self.warned_high_inv = True
-            logger.warning('Magnitude is higher than INT64, results can be invalid or imprecise')
+            logger.warning('Magnitude is higher than 2**53, results can be invalid or imprecise')
 
-        unifs = self.uniform(0, 1, size)
+        unifs = self.uniform(0, 1, size) if mag < self.DOUBLE_LIMIT else self.random_precise(math.log2(mag))
         for i in range(size or 1):
             uu = unifs if single else unifs[i]
             guess = int(mag * uu) + low
@@ -177,6 +232,9 @@ class RGeneratorPCG(RGenerator):
 
         return self.gen.uniform(low, high, size=size)
 
+    def random(self, size=None):
+        return self.gen.random(size)
+
 
 def rand_moduli(mod, gen: RGenerator):
     while True:
@@ -191,6 +249,11 @@ def rand_gen_randint(low, high, gen: RGenerator, chunk=2048):
 def rand_gen_uniform(low, high, gen: RGenerator, chunk=2048):
     while True:
         yield from gen.uniform(low, high, chunk)
+
+
+def rand_gen_uniform_prec(low, high, gen: RGenerator, chunk=2048, precision=50):
+    while True:
+        yield from gen.uniform_precise(low, high, chunk, precision)
 
 
 def rand_moduli_bias_frac(mod, gen: Optional[RGenerator], p=0.001, frac=10):
@@ -222,14 +285,18 @@ class ModSpreader:
         self.max = (2 ** osize)
         self.max_mask = self.max - 1
         self.tp = self.max // m  # number of full-sized ms inside the range
+        self.tc = math.ceil(self.max / self.m) - 1  # number of full-sized ms inside the range
         self.bp = self.max / m   # precise fraction
         self.rm = self.max - self.tp * self.m
         self.msize = int(math.ceil(math.log2(m)))
+        self.mmin1_frac = fractions.Fraction(1, self.m - 1)
 
-        self.gen_randint_0_tp = rand_gen_randint(0, max(0, self.tp), gen)
+        self.gen_randint_0_tp = rand_gen_randint(0, max(0, self.tc), gen)
         self.gen_randint_0_maxm1 = rand_gen_randint(0, self.max - 1, gen)
-        self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1.0)), gen)
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
+        self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1.0)), gen)
+        self.gen_uniform_0_step_frac = rand_gen_uniform_prec(0, self.mmin1_frac, gen,
+                                                             precision=max(osize, math.log2(m if m >= 1 else 2)))
 
         if self.max < self.m:
             logger.warning("Moduli is greater than maximum, some strategies might not work")
@@ -238,7 +305,7 @@ class ModSpreader:
 
         if self.max >= self.m:
             # Rejection ratio: prob of highest m-offset * portion of overflowing chunk out of m
-            rej_ratio = 1 / (self.tp + 1) * ((self.tp + 1) * self.m - self.max) / self.m
+            rej_ratio = 1 / (self.tc + 1) * ((self.tc + 1) * self.m - self.max) / self.m
             logger.info("Expected rejection ratio: %s" % (rej_ratio,))
 
         elif self.max < self.m:
@@ -311,7 +378,8 @@ class ModSpreader:
         """10: Inversion sampling, https://en.wikipedia.org/wiki/Inverse_transform_sampling
         Intuition: use z to cover the whole interval. Without correction, there would be gaps (e.g., hit only each 4th
           number). Use then U() generator to cover the holes. Minimum rejections.
-        Warning: due to float multiplication, this method works only for sizes up 2**64
+        Warning: due to float multiplication, this method works only for sizes up 2**53
+        https://docs.python.org/3/tutorial/floatingpoint.html IEEE-754
 
           - z is in the interval [0, m-1], uniform. Then Y = z/(m-1) is on [0, 1]
           - step = 1/(m-1) is a difference of two closest values from Y distribution, numbers "inside" the step
@@ -342,6 +410,37 @@ class ModSpreader:
         """Masking with osize. If 2**osize / m is not an integer, it is biased"""
         z %= self.m
         return z & self.max_mask
+
+    def spread_inverse_gaps(self, z):
+        """2**osize % mod number of gaps"""
+        z %= self.m
+        x = (z << self.osize) // self.m  # u = z * (2**osize) / m, avoiding floating division
+        return x if x < self.max else None
+
+    def spread_inverse_frac(self, z):
+        """Uses unlimited precision uniform number generator and fractions to compute inverse"""
+        u = (z % self.m) * self.mmin1_frac  # uniform dist on [0, 1], step is 1/(m-1)
+        x = int((u + next(self.gen_uniform_0_step_frac)) * self.max_mask)
+        return x if x < self.max else None
+
+    def spread_inverse_large(self, z):
+        z %= self.m
+        u = (z << self.osize) // self.m  # u = z * (2**osize) / m, avoiding floating division
+        # step = 259 is step for 2**16 vs 0xff03 = 1/((2**16 / 0xff03) - 1)
+
+        # Number of missing elements = 65536 % modulus = 253
+        # Additive step: 65536 / (65536 % 0xff03) = 259.0355731225296
+        #  ==> 1 / 0.0355731225296 = 28.111111111146094 -> each 28th new overflow (259.0355731225296 * 27, * 28, * 29)
+
+        # aa = [((i) << 16) // 0xff3d for i in range(0xff3d)]; aas=set(aa)
+        # bb=[x for x in range(2**16) if x not in aas]
+        # [bb[i]-bb[i+1] for i in range(len(bb)-1)]
+        # [(i,x) for i,x in enumerate(bbb) if x != -259]
+
+        # more precise method: gen 50-bit precision uniform, delete by 1/50 in fraction()
+        # or decimal.getcontext().prec = 800
+        x = int((u + next(self.gen_uniform_0_step)) * self.max_mask)
+        return x if x < self.max else None
 
 
 class DataGenerator:
@@ -443,7 +542,7 @@ class DataGenerator:
             elif st == 10:
                 spread_func = spreader.spread_inverse_sample
                 logger.info('Strategy: inversion sampling (works on limited range)')
-                if max(spreader.m, spreader.max_mask) >= 2**50:
+                if max(spreader.m, spreader.max_mask) >= 2**50:  # https://docs.python.org/3/tutorial/floatingpoint.html
                     logger.warning('Inversion sampling does not work for large numbers (float precision)')
             elif st == 11:
                 spread_func = spreader.spread_rand
@@ -457,6 +556,12 @@ class DataGenerator:
                             'masks input with osize maks, works only for 2*mod >= 2**osize)')
                 if 2*spreader.m < spreader.max_mask:
                     logger.warning('Masking strategy is highly biased with 2*mod < 2**osize')
+            elif st == 14:
+                spread_func = spreader.spread_inverse_gaps
+                logger.info('Strategy: spread_inverse_gaps (simple spread with gaps, has bias)')
+            elif st == 15:
+                spread_func = spreader.spread_inverse_frac
+                logger.info('Strategy: spread_inverse_frac (inversion sampling with unlimited precision)')
             else:
                 raise ValueError('No such strategy')
 
