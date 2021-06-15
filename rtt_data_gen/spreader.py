@@ -105,15 +105,16 @@ class RGenerator:
         single = size is None
 
         # 50-bit precision random values
-        vals = (math.floor(x * prec) for x in self.random(steps * ssize))
+        vals = (int(x * prec) for x in self.random(steps * ssize))
         res = [None] * ssize
 
         for oi in range(ssize):
-            cres = fractions.Fraction(0, 1)
-            sub = self.FLOAT_PREC
+            cres = 0
+            sub = 0
             for i in range(steps):
-                cres += fractions.Fraction(next(vals)) * sub
-                sub *= self.FLOAT_PREC
+                cres += next(vals) << sub
+                sub += 50
+            cres = fractions.Fraction(cres, 1 << sub, _normalize=False)
 
             if single:
                 return cres
@@ -121,7 +122,7 @@ class RGenerator:
         return res
 
     def uniform_precise(self, low, high, size=None, precision: Union[int, float] = 50):
-        mag = high + 1 - low
+        mag = high - low
         if size is None:
             return low + self.random_precise(precision, size) * mag
 
