@@ -182,7 +182,9 @@ class RGeneratorPCG(RGenerator):
 
         mag = high - low
         big_mag = mag >= self.INT64_LIMIT
-        if big_mag:
+        if mag == 0:
+            sampler = lambda: 0
+        elif big_mag:
             byte_size = int(math.ceil(math.log2(mag) / 8))
             sampler = lambda: int.from_bytes(self.randbytes(byte_size), byteorder='big')
         else:
@@ -318,8 +320,9 @@ class ModSpreader:
             mask_bias_w = self.m // self.max  # how many full-widths, base. Bias is then mask_bias_w+1 / mask_bias_w
             mask_bias_ws = '%s:%s' % ((mask_bias_w, mask_bias_w + 1) if mask_bias_0 == mask_bias_m
                                       else (mask_bias_w + 1, mask_bias_w))
-            logger.info("Expected masking bias on range %s (%s values), weight %s"
-                        % (mask_bias_r, mask_bias_m, mask_bias_ws))
+            rejection_drop = self.max / self.m
+            logger.info("Expected masking bias on range %s (%s values), weight %s. Reject drop %s"
+                        % (mask_bias_r, mask_bias_m, mask_bias_ws, rejection_drop))
 
     def spread(self, z):
         """Spread number z inside range (0 ... m) to osize"""
@@ -423,6 +426,14 @@ class ModSpreader:
         u = (z % self.m) * self.mmin1_frac  # uniform dist on [0, 1], step is 1/(m-1)
         x = int((u + next(self.gen_uniform_0_step_frac)) * self.max_mask)
         return x if x < self.max else None
+
+    def spread_drop(self, z):
+        """16: if max < modulus, just drop everything above max. Same as spread_reject, but faster"""
+        return z if z < self.max else None
+
+    def spread_drop_gen(self, z):
+        """17: if max < modulus, use z if < max, else generate a random integer. Same as spread_gen, but faster"""
+        return z if z < self.max else None
 
     def spread_inverse_large(self, z):
         z %= self.m
@@ -563,6 +574,12 @@ class DataGenerator:
             elif st == 15:
                 spread_func = spreader.spread_inverse_frac
                 logger.info('Strategy: spread_inverse_frac (inversion sampling with unlimited precision)')
+            elif st == 16:
+                spread_func = spreader.spread_drop
+                logger.info('Strategy: spread_drop')
+            elif st == 17:
+                spread_func = spreader.spread_drop_gen
+                logger.info('Strategy: spread_drop_gen')
             else:
                 raise ValueError('No such strategy')
 
