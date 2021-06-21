@@ -122,9 +122,14 @@ class DataGenerator:
             time.sleep(1)
         logger.info("Async command finished")
 
+    def resolve_rtt_exec_dir(self):
+        if not self.rtt_config_dir:
+            self.rtt_config_dir = os.getenv('RTT_EXEC')
+        return self.rtt_config_dir
+
     def resolve_cstreams_bin(self):
         if not self.cs_bin:
-            self.cs_bin = get_cryptostreams_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
+            self.cs_bin = get_cryptostreams_bin(rtt_config=self.rtt_config, search_dir=self.resolve_rtt_exec_dir())
         return self.cs_bin
 
     def handle_input_files(self, config):
@@ -216,9 +221,9 @@ class DataGenerator:
         if '{{PYTHON_BIN}}' in template and not self.python_bin:
             self.python_bin = sys.executable
         if '{{SAGE_BIN}}' in template and not self.sage_bin:
-            self.sage_bin = get_sage_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
+            self.sage_bin = get_sage_bin(rtt_config=self.rtt_config, search_dir=self.resolve_rtt_exec_dir())
         if '{{SAGE_PYTHON_BIN}}' in template and not self.sage_python_bin:
-            self.sage_python_bin = get_sage_python_bin(rtt_config=self.rtt_config, search_dir=self.rtt_config_dir)
+            self.sage_python_bin = get_sage_python_bin(rtt_config=self.rtt_config, search_dir=self.resolve_rtt_exec_dir())
 
         res = template
         if '{{CRYPTOSTREAMS_BIN}}' in template:
@@ -227,7 +232,7 @@ class DataGenerator:
         res = res.replace('{{PYTHON_BIN}}', self.python_bin or 'python3')
         res = res.replace('{{SAGE_BIN}}', self.sage_bin or 'sage')
         res = res.replace('{{SAGE_PYTHON_BIN}}', self.sage_python_bin or 'sage -python')
-        res = res.replace('{{RTT_EXEC}}', self.rtt_config_dir)
+        res = res.replace('{{RTT_EXEC}}', self.resolve_rtt_exec_dir() or '')
         res = res.replace('{{OFILE}}', self.args.data_path or '')
         return res
 

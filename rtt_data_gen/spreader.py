@@ -10,6 +10,7 @@ import random
 import logging
 import coloredlogs
 import itertools
+import hashlib
 import operator
 import functools
 import decimal
@@ -585,6 +586,10 @@ class DataGenerator:
 
         gen_ctr = counter(self.args.inp_ctr_off, mod) if self.args.inp_ctr else None
         gen_moduli = rand_moduli(mod, self.rng) if self.args.rand_mod else None
+        sha256_read = hashlib.sha256()
+        sha256_proc = hashlib.sha256()
+        nbyte_read = 0
+        nbyte_proc = 0
 
         b = bitarray(endian=self.args.input_endian)
         b_filler = bitarray(isize_b * 8 - isize, endian=self.args.input_endian)
@@ -629,6 +634,9 @@ class DataGenerator:
             if not data:
                 break
 
+            sha256_read.update(data)
+            nbyte_read += len(data)
+
             # Manage output size constrain in bits
             cblen = len(data) * 8
             last_chunk_sure = False
@@ -640,6 +648,8 @@ class DataGenerator:
 
             cur_len += cblen
             elems = cblen // isize
+            sha256_proc.update(data)
+            nbyte_proc += len(data)
 
             if cblen % isize != 0 and not last_chunk_sure:
                 logger.warning('Read bits not aligned, %s vs isize %s, mod: %s. May happen for the last chunk.'
@@ -699,6 +709,8 @@ class DataGenerator:
                 break
 
         time_elapsed = time.time() - time_start
+        logger.info("Processing finished, %s B read, %s B processed. SHA256 read: %s, ShA256 processed: %s"
+                    % (nbyte_read, nbyte_proc, sha256_read.hexdigest(), sha256_proc.hexdigest()))
         logger.info("Number of rejects: %s, overflows: %s, elems: %s, time: %s s"
                     % (nrejects, noverflows, n_elems_read, time_elapsed, ))
         if self.args.ofile:

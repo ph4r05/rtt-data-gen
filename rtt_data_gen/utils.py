@@ -72,7 +72,7 @@ def get_cryptostreams_bin(binpath=None, rtt_settings_path=None, rtt_config=None,
     if cand is not None and os.path.exists(cand):
         return cand
 
-    if search_dir is None:
+    if search_dir is None and rtt_settings_path is not None:
         search_dir = os.path.dirname(rtt_settings_path)
 
     if search_dir:
@@ -111,7 +111,7 @@ def get_sage_bin(binpath=None, rtt_settings_path=None, rtt_config=None, search_d
     if cand is not None and os.path.exists(cand):
         return cand
 
-    if search_dir is None:
+    if search_dir is None and rtt_settings_path is not None:
         search_dir = os.path.dirname(rtt_settings_path)
 
     if search_dir:
@@ -146,7 +146,7 @@ def get_sage_python_bin(binpath=None, rtt_settings_path=None, rtt_config=None, s
     if cand is not None and os.path.exists(cand):
         return cand
 
-    if search_dir is None:
+    if search_dir is None and rtt_settings_path is not None:
         search_dir = os.path.dirname(rtt_settings_path)
 
     if search_dir:
