@@ -97,6 +97,9 @@ class RGenerator:
     def random(self, size=None):
         raise ValueError()
 
+    def normal(self, loc=0.0, scale=1.0, size=None):
+        raise ValueError()
+
     def random_precise(self, precision: Union[None, int, float] = 50, size=None):
         """Returns fractional on [0,1) with given precision (large number computation). Double precision is 53 bits."""
         steps = math.ceil((precision or 50) / 50.)
@@ -239,6 +242,9 @@ class RGeneratorPCG(RGenerator):
     def random(self, size=None):
         return self.gen.random(size)
 
+    def normal(self, loc=0.0, scale=1.0, size=None):
+        return self.gen.normal(loc=loc, scale=scale, size=size)
+
 
 def rand_moduli(mod, gen: RGenerator):
     while True:
@@ -270,6 +276,15 @@ def rand_moduli_bias_frac(mod, gen: Optional[RGenerator], p=0.001, frac=10):
             yield next(gen_bias)
         else:
             yield next(gen_uni)
+
+
+def rand_gen_mod_normal(mod, gen: RGenerator, loc=None, scale=None, chunk=2048):
+    while True:
+        for x in gen.normal(loc or 0.0, scale or 1.0, chunk):
+            cx = int(x * (mod//4) + (mod//2))
+            if cx < 0 or cx >= mod:
+                continue
+            yield cx
 
 
 class ModSpreader:
@@ -628,6 +643,12 @@ class DataGenerator:
             elif self.args.rand_mod_bias3:
                 gg = rand_moduli_bias_frac(mod, self.rng, 0.01, 4)
                 data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
+            elif self.args.rand_mod_bias4:
+                gg = rand_moduli_bias_frac(mod, self.rng, 0.1, 3)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
+            elif self.args.rand_mod_bias5:
+                gg = rand_gen_mod_normal(mod, self.rng)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
             else:
                 data = self.rng.randbytes(read_chunk)
 
@@ -740,6 +761,12 @@ class DataGenerator:
         parser.add_argument('--inp-rand-mod-bias3', dest='rand_mod_bias3', action='store_const', const=True,
                             help='Input method: Generate randomness internally, generating random integer in mod range,'
                                  ' bias3')
+        parser.add_argument('--inp-rand-mod-bias4', dest='rand_mod_bias4', action='store_const', const=True,
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias4')
+        parser.add_argument('--inp-rand-mod-bias5', dest='rand_mod_bias5', action='store_const', const=True,
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias5')
         parser.add_argument('--inp-ctr', dest='inp_ctr', action='store_const', const=True,
                             help='Input method: Input counter generator')
         parser.add_argument('--inp-ctr-off', dest='inp_ctr_off', type=int, default=0,

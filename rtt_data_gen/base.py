@@ -280,3 +280,11 @@ def chunks(items, size):
     if buff:
         yield buff
 
+
+def get_int_reader(islicer, endian='big'):
+    """Returns a function reading bytes from input slicer, converting them to integers and yielding out"""
+    def int_reader():
+        for chunk in islicer.process():
+            yield int.from_bytes(bytes(chunk), byteorder=endian)
+    return int_reader
+
