@@ -287,6 +287,23 @@ def rand_gen_mod_normal(mod, gen: RGenerator, loc=None, scale=None, chunk=2048):
             yield cx
 
 
+def rand_gen_alpha(st, gen: RGenerator, mod=None, omax=None, chunk=2048):
+    while True:
+        sgen = None  # 1=osize, 2=mod, 3=normal
+        if st == 1:
+            sgen = rand_gen_randint(0, omax - 1, gen, chunk=chunk)
+        elif st == 2:
+            sgen = rand_gen_randint(0, mod - 1, gen, chunk=chunk)
+        elif st == 3:
+            sgen = rand_gen_mod_normal(mod, gen, chunk=chunk)
+        else:
+            raise ValueError('Unknown st: %s' % (st,))
+
+        for x in sgen:
+            cx = pow(x, 3, mod)
+            yield cx
+
+
 class ModSpreader:
     """
     Takes a number from Z_m and with auxiliar randomness coin flips distributes it to N bits uniformly.
@@ -649,6 +666,9 @@ class DataGenerator:
             elif self.args.rand_mod_bias5:
                 gg = rand_gen_mod_normal(mod, self.rng)
                 data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
+            elif self.args.rand_mod_bias6 != 0:
+                gg = rand_gen_alpha(self.args.rand_mod_bias6, self.rng, mod=mod, omax=2**osize)
+                data = number_streamer(gg, isize, read_chunk, endian=self.args.input_endian)
             else:
                 data = self.rng.randbytes(read_chunk)
 
@@ -766,7 +786,10 @@ class DataGenerator:
                                  ' bias4')
         parser.add_argument('--inp-rand-mod-bias5', dest='rand_mod_bias5', action='store_const', const=True,
                             help='Input method: Generate randomness internally, generating random integer in mod range,'
-                                 ' bias5')
+                                 ' bias5 - normal')
+        parser.add_argument('--inp-rand-mod-bias6', dest='rand_mod_bias6', type=int,
+                            help='Input method: Generate randomness internally, generating random integer in mod range,'
+                                 ' bias6 - ^3. 1=osize, 2=mod, 3=normal')
         parser.add_argument('--inp-ctr', dest='inp_ctr', action='store_const', const=True,
                             help='Input method: Input counter generator')
         parser.add_argument('--inp-ctr-off', dest='inp_ctr_off', type=int, default=0,
