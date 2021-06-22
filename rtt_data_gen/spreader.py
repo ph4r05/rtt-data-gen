@@ -359,7 +359,7 @@ class ModSpreader:
             mask_bias_ws = '%s:%s' % ((mask_bias_w, mask_bias_w + 1) if mask_bias_0 == mask_bias_m
                                       else (mask_bias_w + 1, mask_bias_w))
             rejection_drop = self.max / self.m
-            logger.info("Expected masking bias on range %s (%s values), weight %s. Reject drop %s"
+            logger.info("Expected masking bias on range %s (%s values), weight %s. Accept rate for drop above max: %s"
                         % (mask_bias_r, mask_bias_m, mask_bias_ws, rejection_drop))
 
     def spread(self, z):
