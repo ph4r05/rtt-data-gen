@@ -363,29 +363,29 @@ class ModSpreader:
                         % (mask_bias_r, mask_bias_m, mask_bias_ws, rejection_drop))
 
     def spread(self, z):
-        """Spread number z inside range (0 ... m) to osize"""
+        """1: Spread number z inside range (0 ... m) to osize, biases in one end"""
         z %= self.m
         return (self.m * self.gen.randint(0, self.tp if z < self.rm else self.tp - 1)) + z
 
     def spread_weak(self, z):
-        """Spreads number inside range (0 ... m) to osize, with bias on lower moduli range"""
+        """2: Spreads number inside range (0 ... m) to osize, with bias on lower moduli range"""
         z %= self.m
         return z + (self.gen.randbits(self.osize - self.msize) << self.msize)
 
     def spread_weak_minus(self, z):
-        """Spreads number inside range (0 ... m) to osize, with bias - upper moduli is not covered"""
+        """3: Spreads number inside range (0 ... m) to osize, with bias - upper moduli is not covered"""
         z %= self.m
         y = self.gen.randbits(self.osize)
         return (y - (y % self.m)) + z
 
     def spread_weak_weird(self, z):
-        """For testing, generates highly non-uniform distribution (resembles a company logo)"""
+        """4: For testing, generates highly non-uniform distribution (resembles a company logo)"""
         z %= self.m
         y = self.gen.randbits(self.osize)
         return (y - self.m if y >= self.m else y) + z
 
     def spread_flat(self, z):
-        """For testing, introducing significant bias by masking random positions in moduli to zero"""
+        """5: For testing, introducing significant bias by masking random positions in moduli to zero"""
         p = self.gen.randbits(self.gen.randint(0, 8))
         z &= ~p
         return self.spread(z)
@@ -406,12 +406,12 @@ class ModSpreader:
         return x if x < self.max else next(self.gen_randint_0_maxm1)
 
     def spread_wider(self, z):
-        """Cannot detect biases, z is basically ignored"""
+        """8: Cannot detect biases, z is basically ignored"""
         z %= self.m
         return int(next(self.gen_uniform_0_bp) * self.m + z) & self.max_mask
 
     def spread_wider_reject(self, z):
-        """Cannot detect biases, z is basically ignored"""
+        """9: Cannot detect biases, z is basically ignored"""
         z %= self.m
         x = int(next(self.gen_uniform_0_bp) * self.m + z)
         return x if x < self.max else None
@@ -441,26 +441,28 @@ class ModSpreader:
         return x if x < self.max else None
 
     def spread_rand(self, z):
+        """11: Completely random, ignoring input"""
         x = int(next(self.gen_randint_0_maxm1))
         return x if x < self.max else None
 
     def spread_mask_fixed(self, z):
+        """12: always enable 15th bit, bias"""
         z %= self.m
         return z | (1 << 15)
 
     def spread_mask(self, z):
-        """Masking with osize. If 2**osize / m is not an integer, it is biased"""
+        """13: Masking with osize. If 2**osize / m is not an integer, it is biased"""
         z %= self.m
         return z & self.max_mask
 
     def spread_inverse_gaps(self, z):
-        """2**osize % mod number of gaps"""
+        """14: 2**osize % mod number of gaps"""
         z %= self.m
         x = (z << self.osize) // self.m  # u = z * (2**osize) / m, avoiding floating division
         return x if x < self.max else None
 
     def spread_inverse_frac(self, z):
-        """Uses unlimited precision uniform number generator and fractions to compute inverse"""
+        """15: Uses unlimited precision uniform number generator and fractions to compute inverse"""
         u = (z % self.m) * self.mmin1_frac  # uniform dist on [0, 1], step is 1/(m-1)
         x = int((u + next(self.gen_uniform_0_step_frac)) * self.max_mask)
         return x if x < self.max else None
@@ -480,6 +482,7 @@ class ModSpreader:
         return z if z < self.max else None
 
     def spread_inverse_large(self, z):
+        """NA: Attempt to do spread_inverse_frac with large number operation, faster. Not finished."""
         z %= self.m
         u = (z << self.osize) // self.m  # u = z * (2**osize) / m, avoiding floating division
         # step = 259 is step for 2**16 vs 0xff03 = 1/((2**16 / 0xff03) - 1)
@@ -605,7 +608,7 @@ class DataGenerator:
                 logger.info('Strategy: spread_rand (uniform, ignores input)')
             elif st == 12:
                 spread_func = spreader.spread_mask_fixed
-                logger.info('Strategy: spread_mask_fixed (input & mask, biased)')
+                logger.info('Strategy: spread_mask_fixed (input & mask, biased 15th bit)')
             elif st == 13:
                 spread_func = spreader.spread_mask
                 logger.info('Strategy: spread_mask (slight bias, '
