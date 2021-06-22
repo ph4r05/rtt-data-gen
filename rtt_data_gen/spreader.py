@@ -177,7 +177,8 @@ class RGeneratorPCG(RGenerator):
         if high >= self.INT64_LIMIT:
             return self.randint_bytes_rejection(low, high, size)
 
-        return self.gen.integers(low, high, size=size, endpoint=True)  # high is too high for some moduli, >= 2**64
+        # high is too high for some moduli, >= 2**64
+        return [int(x) for x in self.gen.integers(low, high, size=size, endpoint=True)]
 
     def randint_bytes_rejection(self, low, high, size=None):
         """Generates large random integers, above 2**63, using rejection sampling from random bytes"""
@@ -196,7 +197,7 @@ class RGeneratorPCG(RGenerator):
 
         for _ in range(size or 1):
             while True:  # rejection sampling
-                guess = low + sampler()
+                guess = int(low + sampler())
                 if guess <= high:
                     break
 
@@ -334,6 +335,10 @@ class ModSpreader:
         self.gen_uniform_0_step_frac = rand_gen_uniform_prec(0, self.mmin1_frac, gen,
                                                              precision=max(osize, math.log2(m if m >= 1 else 2)))
 
+        self.m_bits = int(math.log2(m)) if m > 1 else 0
+        self.mask_size = max(0, osize - self.m_bits)
+        self.gen_randint_mask = rand_gen_randint(0, 2**self.mask_size - 1, gen) if self.mask_size else None
+
         if self.max < self.m:
             logger.warning("Moduli is greater than maximum, some strategies might not work")
         if max(self.max_mask, self.m - 1) >= 2**63:
@@ -466,6 +471,12 @@ class ModSpreader:
 
     def spread_drop_gen(self, z):
         """17: if max < modulus, use z if < max, else generate a random integer. Same as spread_gen, but faster"""
+        return z if z < self.max else next(self.gen_randint_0_maxm1)
+
+    def spread_expand(self, z):
+        """18: For mod < max, bit-aligned mod. Generate upper mask randomly"""
+        r = next(self.gen_randint_mask)
+        z |= r << self.m_bits
         return z if z < self.max else None
 
     def spread_inverse_large(self, z):
@@ -613,6 +624,9 @@ class DataGenerator:
             elif st == 17:
                 spread_func = spreader.spread_drop_gen
                 logger.info('Strategy: spread_drop_gen')
+            elif st == 18:
+                spread_func = spreader.spread_expand
+                logger.info('Strategy: spread_expand')
             else:
                 raise ValueError('No such strategy')
 
