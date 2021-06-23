@@ -77,7 +77,7 @@ def get_cryptostreams_bin(binpath=None, rtt_settings_path=None, rtt_config=None,
 
     if search_dir:
         dname = search_dir
-        cands = glob.glob('%s/crypto-streams*' % dname)
+        cands = sorted(glob.glob('%s/crypto-streams*' % dname))
         if cands and len(cands) > 0 and os.path.exists(cands[0]):
             rcand = os.path.realpath(cands[0])
             if os.access(rcand, os.X_OK):
