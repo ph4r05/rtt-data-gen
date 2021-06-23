@@ -1,5 +1,6 @@
 import binascii
 import math
+import hashlib
 import logging
 from typing import BinaryIO, Optional
 
@@ -132,7 +133,8 @@ class OutputSequencer:
     """
     __slots__ = ('ostream', 'writer', 'endian', 'fsize', 'fsize_b', 'osize', 'osize_b', 'osize_aligned',
                  'bit_append_possible', 'hexlify', 'use_bit_precision', 'whole_bytes', 'osize_offset',
-                 'b', 'btmp', 'bout', 'filler', 'do_padd', 'bfill', 'dump_bits', 'byte_dumper', 'bits_written')
+                 'b', 'btmp', 'bout', 'filler', 'do_padd', 'bfill', 'dump_bits', 'byte_dumper', 'bits_written',
+                 'sha256_written')
 
     def __init__(self, fsize=256, osize=256, ostream: Optional[BinaryIO] = None, writer=None, endian='big',
                  hexlify=False, use_bit_precision=False):
@@ -150,6 +152,7 @@ class OutputSequencer:
         self.whole_bytes = (self.osize % 8) == 0 and not self.use_bit_precision
         self.osize_offset = self.osize_b * 8 - self.osize
         self.bits_written = 0
+        self.sha256_written = hashlib.sha256()
 
         self.b = None
         self.btmp = None
@@ -256,6 +259,8 @@ class OutputSequencer:
             chunk = binascii.hexlify(chunk)
 
         self.bits_written += len(chunk) * 8
+        self.sha256_written.update(chunk)
+
         if self.ostream is not None:
             self.ostream.write(chunk)
 

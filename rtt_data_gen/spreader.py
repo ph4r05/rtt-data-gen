@@ -161,6 +161,11 @@ class RGeneratorRandom(RGenerator):
         return [random.random() for _ in range(size)]
 
 
+def log2ceil(x):
+    cd = math.ceil(math.log(x, 2))
+    return cd if x <= 2**cd else cd+1
+
+
 class RGeneratorPCG(RGenerator):
     INT64_LIMIT = 2**63
     DOUBLE_LIMIT = 2**53
@@ -190,7 +195,7 @@ class RGeneratorPCG(RGenerator):
         if mag == 0:
             sampler = lambda: 0
         elif big_mag:
-            byte_size = int(math.ceil(math.log2(mag) / 8))
+            byte_size = int(math.ceil(math.log(mag, 2) / 8))
             sampler = lambda: int.from_bytes(self.randbytes(byte_size), byteorder='big')
         else:
             sampler = lambda: self.gen.integers(0, mag, endpoint=True)
@@ -217,7 +222,7 @@ class RGeneratorPCG(RGenerator):
             self.warned_high_inv = True
             logger.warning('Magnitude is higher than 2**53, results can be invalid or imprecise')
 
-        unifs = self.uniform(0, 1, size) if mag < self.DOUBLE_LIMIT else self.random_precise(math.log2(mag))
+        unifs = self.uniform(0, 1, size) if mag < self.DOUBLE_LIMIT else self.random_precise(math.log(mag, 2))
         for i in range(size or 1):
             uu = unifs if single else unifs[i]
             guess = int(mag * uu) + low
@@ -325,7 +330,7 @@ class ModSpreader:
         self.tc = math.ceil(self.max / self.m) - 1  # number of full-sized ms inside the range
         self.bp = self.max / m   # precise fraction
         self.rm = self.max - self.tp * self.m
-        self.msize = int(math.ceil(math.log2(m)))
+        self.msize = int(log2ceil(m))
         self.mmin1_frac = fractions.Fraction(1, self.m - 1)
 
         self.gen_randint_0_tp = rand_gen_randint(0, max(0, self.tc), gen)
@@ -333,9 +338,9 @@ class ModSpreader:
         self.gen_uniform_0_bp = rand_gen_uniform(0, self.bp, gen)
         self.gen_uniform_0_step = rand_gen_uniform(0, max(0, 1 / (self.m - 1.0)), gen)
         self.gen_uniform_0_step_frac = rand_gen_uniform_prec(0, self.mmin1_frac, gen,
-                                                             precision=max(osize, math.log2(m if m >= 1 else 2)))
+                                                             precision=max(osize, math.log(m if m >= 1 else 2, 2)))
 
-        self.m_bits = int(math.log2(m)) if m > 1 else 0
+        self.m_bits = int(math.log(m, 2)) if m > 1 else 0
         self.mask_size = max(0, osize - self.m_bits)
         self.gen_randint_mask = rand_gen_randint(0, 2**self.mask_size - 1, gen) if self.mask_size else None
 
@@ -532,7 +537,7 @@ class DataGenerator:
         is_binary = self.args.binary or self.args.binary_randomize
         is_binary_rand = self.args.binary_randomize
         mod = int(self.args.mod, 16) if self.args.mod else None
-        mod_size = int(math.ceil(math.log2(mod))) if mod else None
+        mod_size = int(log2ceil(mod)) if mod else None
 
         osize = self.args.osize
         isize = self.args.isize
@@ -767,8 +772,16 @@ class DataGenerator:
                 break
 
         time_elapsed = time.time() - time_start
-        logger.info("Processing finished, %s B read, %s B processed. SHA256 read: %s, ShA256 processed: %s"
-                    % (nbyte_read, nbyte_proc, sha256_read.hexdigest(), sha256_proc.hexdigest()))
+        hash_read = sha256_read.hexdigest()
+        hash_proc = sha256_read.hexdigest()
+        hash_written = oseq.sha256_written.hexdigest()
+        logger.info("Processing finished")
+        logger.info("%s B read, SHA256 read: %s" % (nbyte_read, hash_read))
+
+        if hash_read != hash_proc:
+            logger.info("%s B proc, SHA256 proc: %s" % (nbyte_proc, hash_proc))
+
+        logger.info("%s B written, SHA256 written: %s" % (oseq.bits_written // 8, hash_written))
         logger.info("Number of rejects: %s, overflows: %s, elems: %s, time: %s s"
                     % (nrejects, noverflows, n_elems_read, time_elapsed, ))
         if self.args.ofile:
