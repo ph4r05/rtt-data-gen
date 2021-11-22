@@ -295,13 +295,15 @@ def rand_gen_mod_normal(mod, gen: RGenerator, loc=None, scale=None, chunk=2048):
 
 def rand_gen_alpha(st, gen: RGenerator, mod=None, omax=None, chunk=2048):
     while True:
-        sgen = None  # 1=osize, 2=mod, 3=normal
+        sgen = None  # 1=osize, 2=mod, 3=normal, 4=counter with random offset mod
         if st == 1:
             sgen = rand_gen_randint(0, omax - 1, gen, chunk=chunk)
         elif st == 2:
             sgen = rand_gen_randint(0, mod - 1, gen, chunk=chunk)
         elif st == 3:
             sgen = rand_gen_mod_normal(mod, gen, chunk=chunk)
+        elif st == 4:
+            sgen = counter(gen.randint(0, mod - 1), mod)
         else:
             raise ValueError('Unknown st: %s' % (st,))
 
