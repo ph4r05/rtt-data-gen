@@ -821,7 +821,7 @@ class DataGenerator:
                                  ' bias5 - normal')
         parser.add_argument('--inp-rand-mod-bias6', dest='rand_mod_bias6', type=int,
                             help='Input method: Generate randomness internally, generating random integer in mod range,'
-                                 ' bias6 - ^3. 1=osize, 2=mod, 3=normal')
+                                 ' bias6 - x^3 mod M. 1=rand osize, 2=rand mod, 3=normal dist, 4=ctr with rand offset')
         parser.add_argument('--inp-ctr', dest='inp_ctr', action='store_const', const=True,
                             help='Input method: Input counter generator')
         parser.add_argument('--inp-ctr-off', dest='inp_ctr_off', type=int, default=0,
